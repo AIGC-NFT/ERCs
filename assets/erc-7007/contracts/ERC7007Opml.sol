@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
@@ -24,17 +24,25 @@ contract ERC7007Opml is ERC165, IERC7007Updatable, ERC721URIStorage {
         opmlLib = opmlLib_;
     }
 
-    /**
-     * @dev See {IERC7007-mint}.
-     */
-    function mint(
-        address to,
+    function addAigcData(
+        uint256 tokenId,
         bytes calldata prompt,
         bytes calldata aigcData,
+        bytes calldata proof
+    ) public virtual override {
+        tokenIdToRequestId[tokenId] = IOpmlLib(opmlLib).initOpmlRequest(prompt);
+        IOpmlLib(opmlLib).uploadResult(tokenIdToRequestId[tokenId], aigcData);
+        emit AigcData(tokenId, prompt, aigcData, proof);
+    }
+
+    function mint(address to,
+        bytes calldata prompt,
         string calldata uri,
         bytes calldata proof
-    ) public virtual override returns (uint256 tokenId) {
+    ) external returns (uint256 tokenId) {
         tokenId = uint256(keccak256(prompt));
+        bytes memory aigcData = IOpmlLib(opmlLib).getOutput(tokenIdToRequestId[tokenId]);
+        require(verify(prompt, aigcData, proof), "ERC7007: invalid proof");
         _safeMint(to, tokenId);
         string memory tokenUri = string(
             abi.encodePacked(
@@ -48,11 +56,6 @@ contract ERC7007Opml is ERC165, IERC7007Updatable, ERC721URIStorage {
             )
         );
         _setTokenURI(tokenId, tokenUri);
-        
-        tokenIdToRequestId[tokenId] = IOpmlLib(opmlLib).initOpmlRequest(prompt);
-        IOpmlLib(opmlLib).uploadResult(tokenIdToRequestId[tokenId], aigcData);
-
-        emit Mint(to, tokenId, prompt, aigcData, uri, proof);
     }
 
     /**
@@ -60,7 +63,7 @@ contract ERC7007Opml is ERC165, IERC7007Updatable, ERC721URIStorage {
      */
     function verify(
         bytes calldata prompt,
-        bytes calldata aigcData,
+        bytes memory aigcData,
         bytes calldata proof
     ) public view virtual override returns (bool success) {
         uint256 tokenId = uint256(keccak256(prompt));
@@ -74,16 +77,13 @@ contract ERC7007Opml is ERC165, IERC7007Updatable, ERC721URIStorage {
      */
     function update(
         bytes calldata prompt,
-        bytes calldata aigcData,
-        string calldata uri
+        bytes calldata aigcData
     ) public virtual override {
         require(verify(prompt, aigcData, prompt), "ERC7007: invalid aigcData"); // proof argument is not used in verify() function for opML, so we can pass prompt as proof
         uint256 tokenId = uint256(keccak256(prompt));
         string memory tokenUri = string(
             abi.encodePacked(
-                "{",
-                uri,
-                ', "prompt": "',
+                '{"prompt": "',
                 string(prompt),
                 '", "aigc_data": "',
                 string(aigcData),
@@ -92,7 +92,7 @@ contract ERC7007Opml is ERC165, IERC7007Updatable, ERC721URIStorage {
         );
         require(keccak256(bytes(tokenUri)) != keccak256(bytes(tokenURI(tokenId))), "ERC7007: token uri is not changed");
 
-        emit Update(tokenId, prompt, aigcData, uri);
+        emit Update(tokenId, prompt, aigcData);
     }
 
     /**
